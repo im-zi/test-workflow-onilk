@@ -1,0 +1,84 @@
+name: "Build Beta App"
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch: # 允许手动触发
+
+jobs:
+  build-tauri:
+    environment: build-beta
+    # 1. 在 Job 级别定义环境变量，方便统一维护
+    env:
+      ZIP_FILE: "beta/source.zip"
+      SRC_DIR: "beta/src-repo"
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: "macos-latest"
+            target-args: "--target aarch64-apple-darwin"
+          - platform: "macos-latest"
+            target-args: "--target x86_64-apple-darwin"
+          - platform: "ubuntu-22.04"
+            target-args: ""
+          - platform: "windows-latest"
+            target-args: ""
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout Build Repo
+        uses: actions/checkout@v4
+
+      # 2. 解压源码包并使用 Secrets 中的密码
+      - name: Extract Source Code
+        shell: bash
+        # 将 secret 赋值给环境变量，避免在命令行拼接时因密码包含特殊字符(如 $ ! 等)导致 bash 解析错误
+        env:
+          ZIP_PASSWORD: ${{ secrets.ZIP_PASSWORD }}
+        run: |
+          unzip -P "$ZIP_PASSWORD" -q "${{ env.ZIP_FILE }}" -d "${{ env.SRC_DIR }}"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Install Dependencies (Ubuntu only)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      # 3. 使用 ${{ env.SRC_DIR }} 替换硬编码路径
+      - name: Install Monorepo Dependencies
+        working-directory: ${{ env.SRC_DIR }}
+        run: npm install
+
+      - name: Build Tauri (Beta)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # GitHub Actions 会在传递参数前自动解析 ${{ }} 语法
+          projectPath: "${{ env.SRC_DIR }}/apps/app"
+          tauriScript: npx tauri
+          args: ${{ matrix.target-args }} --config src-tauri/tauri.beta.json --features beta
+
+      - name: Install Action Script Dependencies
+        working-directory: ${{ env.SRC_DIR }}/.github
+        run: npm install
+
+      - name: Upload Artifacts
+        working-directory: ${{ env.SRC_DIR }}/.github
+        env:
+          FILES_API_PREFIX: ${{ secrets.FILES_API_PREFIX }}
+          API_AUTH_TOKEN: ${{ secrets.API_AUTH_TOKEN }}
+        run: npm run upload
