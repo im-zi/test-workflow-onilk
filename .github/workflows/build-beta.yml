@@ -9,9 +9,7 @@ on:
 jobs:
   build-tauri:
     environment: build-beta
-    # 1. 在 Job 级别定义环境变量，方便统一维护
     env:
-      ZIP_FILE: "beta/source.zip"
       SRC_DIR: "beta/src-repo"
 
     strategy:
@@ -32,10 +30,34 @@ jobs:
       - name: Checkout Build Repo
         uses: actions/checkout@v4
 
-      # 2. 解压源码包并使用 Secrets 中的密码
+      # 2. 新增步骤：通配符寻找 ZIP 文件并截取解析其中的 SHA
+      - name: Determine ZIP file and SHA
+        shell: bash
+        run: |
+          # 寻找 beta/目录下类似 source_$hash.zip 的文件 (拿第一个匹配项)
+          ZIP_PATH=$(ls beta/source_*.zip | head -n 1)
+          if [ -z "$ZIP_PATH" ]; then
+            echo "❌ 未找到符合 beta/source_*.zip 的文件"
+            exit 1
+          fi
+          echo "✅ 找到源码包: $ZIP_PATH"
+
+          # 提取文件名 (例如: source_abcd123.zip)
+          ZIP_NAME=$(basename "$ZIP_PATH")
+
+          # bash 字符串截取: 掐头去尾提取 hash
+          SHA_VAL=${ZIP_NAME#source_} # 移除 "source_" 前缀
+          SHA_VAL=${SHA_VAL%.zip}     # 移除 ".zip" 后缀
+
+          echo "✅ 解析到的 SHA: $SHA_VAL"
+
+          # 写入环境变量供后续 Step 使用
+          echo "ZIP_FILE=$ZIP_PATH" >> $GITHUB_ENV
+          echo "UPLOAD_SHA=$SHA_VAL" >> $GITHUB_ENV
+
+      # 3. 解压源码包 (直接使用动态解析的 env.ZIP_FILE)
       - name: Extract Source Code
         shell: bash
-        # 将 secret 赋值给环境变量，避免在命令行拼接时因密码包含特殊字符(如 $ ! 等)导致 bash 解析错误
         env:
           ZIP_PASSWORD: ${{ secrets.ZIP_PASSWORD }}
         run: |
@@ -57,7 +79,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
-      # 3. 使用 ${{ env.SRC_DIR }} 替换硬编码路径
       - name: Install Monorepo Dependencies
         working-directory: ${{ env.SRC_DIR }}
         run: npm install
@@ -67,7 +88,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          # GitHub Actions 会在传递参数前自动解析 ${{ }} 语法
           projectPath: "${{ env.SRC_DIR }}/apps/app"
           tauriScript: npx tauri
           args: ${{ matrix.target-args }} --config src-tauri/tauri.beta.json --features beta
@@ -76,9 +96,11 @@ jobs:
         working-directory: ${{ env.SRC_DIR }}/.github
         run: npm install
 
+      # 4. 将解析出的 UPLOAD_SHA 传递给上传脚本
       - name: Upload Artifacts
         working-directory: ${{ env.SRC_DIR }}/.github
         env:
           FILES_API_PREFIX: ${{ secrets.FILES_API_PREFIX }}
           API_AUTH_TOKEN: ${{ secrets.API_AUTH_TOKEN }}
-        run: npm run upload
+        # 注意: npm run 传命令行参数给底层脚本时，必须用 `--` 隔开
+        run: npm run upload -- --sha ${{ env.UPLOAD_SHA }}
