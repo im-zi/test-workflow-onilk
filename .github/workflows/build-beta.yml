@@ -103,4 +103,4 @@ jobs:
           FILES_API_PREFIX: ${{ secrets.FILES_API_PREFIX }}
           API_AUTH_TOKEN: ${{ secrets.API_AUTH_TOKEN }}
         # 注意: npm run 传命令行参数给底层脚本时，必须用 `--` 隔开
-        run: npm run upload -- --sha ${{ env.UPLOAD_SHA }}
+        run: npm run upload -- --dir public/release/beta/${{ env.UPLOAD_SHA }}
