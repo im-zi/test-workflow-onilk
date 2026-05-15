@@ -87,6 +87,7 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPLOAD_SHA: ${{ env.UPLOAD_SHA }}
         with:
           projectPath: "${{ env.SRC_DIR }}/apps/app"
           tauriScript: npx tauri
